@@ -14,7 +14,7 @@ Python 3.12. Package versions are pinned in `requirements.txt`. From the project
 
 ```bash
 python3.12 -m venv .venv
-.venv/bin/pip install -r requirements.txt
+.venv/bin/pip install -U -r requirements.txt
 ```
 
 Use `.venv` as the notebook kernel, and run the notebooks in this order:
@@ -128,7 +128,9 @@ The original test labels are blank, so these slices are not scored. The cat-hold
 
 ## What was not fit
 
-A deep model on the pixels was not used. Within a cat, the photo-level target barely replicates, so a network would be fitting disagreement. Between cats, the stable signal is which cat, and a photo embedding would mostly rediscover that identity. Readable visual attributes of the cat are still an optional later check against the 237 strengths in `processed/cat_strengths.csv`. They are not required for the result above.
+A deep model on the pixels was not used. Within a cat, the photo-level target barely replicates, so a network would be fitting disagreement. Between cats, the stable signal is which cat, and a photo embedding would mostly rediscover that identity.
+
+Coat, pattern, breed, framing, eyes, age, and posture are labelled in `processed/image_attributes.csv` (one row per photo) and `processed/cat_attributes.csv` (one row per cat), by `scripts/extract_cat_attributes.py` in the same `.venv`. The labels are not in the model above.
 
 ## Files
 
@@ -138,6 +140,9 @@ A deep model on the pixels was not used. Within a cat, the photo-level target ba
 | `notebooks/01_train_eda_cleaning.ipynb` | Cleaning, appearance counts, agreement by win-rate gap |
 | `notebooks/02_train_statistical_indices.ipynb` | Kappa, side swap, reliability, Cramér's V |
 | `notebooks/03_bradley_terry.ipynb` | Model, holdouts, test file |
+| `scripts/extract_cat_attributes.py` | Coat, breed, framing, eyes, age, and posture |
+| `processed/image_attributes.csv` | One labelled row per photo |
+| `processed/cat_attributes.csv` | One labelled row per cat, with strengths joined when present |
 | `processed/train_cleaned.csv` | Training table used by notebooks 2 and 3 |
 | `processed/cat_strengths.csv` | 237 centered cat strengths and win counts |
 | `processed/test_predictions.csv` | Test file with `prob_a` and `choice` filled |

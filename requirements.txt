@@ -1,7 +1,10 @@
-# Python 3.12. Versions used by the notebooks.
+# Python 3.12. Versions used by the notebooks and the attribute script.
 numpy==2.5.4
 pandas==3.0.6
 scipy==1.18.1
 scikit-learn==1.9.1
 matplotlib==3.11.2
 jupyter==1.1.1
+torch==2.14.1
+ultralytics==8.4.190
+open-clip-torch==3.3.0

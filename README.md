@@ -8,7 +8,7 @@ Python 3.12. From the project root:
 
 ```bash
 python3.12 -m venv .venv
-.venv/bin/pip install -r requirements.txt
+.venv/bin/pip install -U -r requirements.txt
 ```
 
 Use `.venv` as the Jupyter kernel, then run the notebooks in order:
