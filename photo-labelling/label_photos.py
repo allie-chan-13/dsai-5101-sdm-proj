@@ -27,7 +27,6 @@ from pathlib import Path
 
 os.environ.setdefault("OMP_NUM_THREADS", "8")
 os.environ.setdefault("MKL_NUM_THREADS", "8")
-os.environ.setdefault("HF_HUB_OFFLINE", "1")
 os.environ.setdefault("YOLO_VERBOSE", "False")
 warnings.filterwarnings("ignore", module="ultralytics")
 warnings.filterwarnings("ignore", module="torch")
