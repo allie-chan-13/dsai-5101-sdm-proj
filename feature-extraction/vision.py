@@ -1,98 +1,42 @@
-"""Visual attributes for each cat photo.
-
-YOLO (yolo11n-seg) finds the cat and its mask. Coat colour and pattern are
-measured on those pixels. Breed, framing, view, eyes, age, and posture are
-zero-shot CLIP labels on the cropped cat.
-
-From the project root:
-
-    python3.12 -m venv .venv
-    .venv/bin/pip install -U -r requirements.txt
-    .venv/bin/python scripts/extract_cat_attributes.py
-
-Writes processed/image_attributes.csv (one row per photo) and
-processed/cat_attributes.csv (one row per cat). Strength columns are joined
-from processed/cat_strengths.csv when that file is present.
-"""
+"""YOLO masks, coat colour, and CLIP labels."""
 
 from __future__ import annotations
 
-import argparse
+import logging
 import os
-from pathlib import Path
-
-os.environ.setdefault("OMP_NUM_THREADS", "8")
-os.environ.setdefault("MKL_NUM_THREADS", "8")
-os.environ.setdefault("HF_HUB_OFFLINE", "1")
 
 import cv2
 import numpy as np
 import pandas as pd
 import torch
 
-ROOT = Path(__file__).resolve().parents[1]
-IMAGE_ROOT = ROOT / "dataset" / "images"
-PROCESSED = ROOT / "processed"
-WEIGHTS = ROOT / "models" / "yolo11n-seg.pt"
-CAT_CLASS_NAME = "cat"
-
-COLOURS = ["black", "white", "gray", "orange", "cream", "brown"]
-
-BREEDS = [
-    ("domestic_shorthair", "a domestic shorthair cat"),
-    ("domestic_longhair", "a longhaired domestic cat with fluffy fur"),
-    ("siamese", "a siamese cat with a pale body and dark face, ears and tail"),
-    ("persian", "a persian cat with a flat face and long fur"),
-    ("maine_coon", "a maine coon cat with tufted ears and a ruff"),
-    ("bengal", "a bengal cat with a spotted or marbled coat"),
-    ("sphynx", "a hairless sphynx cat"),
-    ("british_shorthair", "a british shorthair cat with a round face and thick short fur"),
-]
-FRAMING = [
-    ("close_up", "a close-up of a cat's face filling the frame"),
-    ("medium", "a cat photographed from the chest up"),
-    ("full_body", "a full body view of a cat"),
-]
-VIEWS = [
-    ("front", "a cat facing the camera"),
-    ("three_quarter", "a cat with its face turned slightly to the side"),
-    ("profile", "a cat in side profile"),
-    ("from_above", "a cat seen from above"),
-    ("looking_away", "a cat looking away from the camera"),
-    ("rear", "a cat seen from behind"),
-]
-EYES = [
-    ("both_open", "a cat with both eyes open"),
-    ("half_closed", "a cat with half-closed sleepy eyes"),
-    ("closed", "a cat with its eyes closed"),
-    ("not_visible", "a cat whose eyes cannot be seen"),
-]
-EYE_COLOURS = [
-    ("green", "a cat with green eyes"),
-    ("yellow", "a cat with yellow eyes"),
-    ("blue", "a cat with blue eyes"),
-    ("copper", "a cat with copper orange eyes"),
-]
-AGE = [
-    ("kitten", "a young kitten with a small body and a large head"),
-    ("adult", "a fully grown adult cat"),
-]
-POSTURE = [
-    ("sitting", "a cat sitting upright"),
-    ("lying", "a cat lying down"),
-    ("standing", "a cat standing on all four paws"),
-]
-PROMPT_GROUPS = {
-    "breed": BREEDS,
-    "framing": FRAMING,
-    "view": VIEWS,
-    "eyes": EYES,
-    "eyes_colour": EYE_COLOURS,
-    "age": AGE,
-    "posture": POSTURE,
-}
-TEMPLATES = ("a photo of {}", "a picture of {}")
-
+from main import (
+    AGE,
+    BREED_MARGIN,
+    BREEDS,
+    CAT_CLASS_NAME,
+    CAT_CONF,
+    CLIP_MODEL,
+    CLIP_PRETRAINED,
+    CLIP_QUICK_GELU,
+    CLOSE_UP_AREA,
+    CLOSE_UP_EDGE_AREA,
+    CLOSE_UP_EDGES,
+    COLOURS,
+    CROP_PAD,
+    DOG_CONF,
+    EYE_COLOURS,
+    EYES,
+    FRAMING,
+    FULL_BODY_AREA,
+    FULL_BODY_EDGES,
+    IMAGE_ROOT,
+    POSTURE,
+    PROMPT_GROUPS,
+    TEMPLATES,
+    VIEWS,
+    WEIGHTS,
+)
 
 def list_images() -> list[Path]:
     paths = sorted(IMAGE_ROOT.glob("cat_*/*.jpg"))
@@ -137,12 +81,14 @@ def load_yolo():
 def load_clip():
     import open_clip
 
+    logging.getLogger("open_clip").setLevel(logging.ERROR)
+
     model, _, preprocess = open_clip.create_model_and_transforms(
-        "ViT-B-32",
-        pretrained="openai",
-        force_quick_gelu=True,
+        CLIP_MODEL,
+        pretrained=CLIP_PRETRAINED,
+        force_quick_gelu=CLIP_QUICK_GELU,
     )
-    tokenizer = open_clip.get_tokenizer("ViT-B-32")
+    tokenizer = open_clip.get_tokenizer(CLIP_MODEL)
     model.eval()
     for param in model.parameters():
         param.requires_grad_(False)
@@ -188,8 +134,8 @@ def animal_instance(result):
         x1, y1, x2, y2 = xyxy[i]
         area = max(0.0, float(x2 - x1) * float(y2 - y1))
         candidates.append((name, float(conf[i]), area, i))
-    cats = [item for item in candidates if item[0] == "cat" and item[1] >= 0.20]
-    dogs = [item for item in candidates if item[0] == "dog" and item[1] >= 0.45]
+    cats = [item for item in candidates if item[0] == "cat" and item[1] >= CAT_CONF]
+    dogs = [item for item in candidates if item[0] == "dog" and item[1] >= DOG_CONF]
     pool = cats or dogs
     if not pool or height == 0 or width == 0:
         return None
@@ -215,6 +161,16 @@ def animal_instance(result):
         "mask": mask,
         "source": source,
         "area_frac": area / float(height * width),
+    }
+
+
+def box_pixels(xyxy, height: int, width: int) -> dict[str, int]:
+    x1, y1, x2, y2 = [float(v) for v in xyxy]
+    return {
+        "bbox_x1": int(np.clip(round(x1), 0, max(0, width - 1))),
+        "bbox_y1": int(np.clip(round(y1), 0, max(0, height - 1))),
+        "bbox_x2": int(np.clip(round(x2), 0, max(0, width - 1))),
+        "bbox_y2": int(np.clip(round(y2), 0, max(0, height - 1))),
     }
 
 
@@ -392,6 +348,117 @@ def eye_colour_from_mask(bgr: np.ndarray, mask: np.ndarray) -> str:
     return ""
 
 
+def open_eye_score(bgr: np.ndarray) -> tuple[float, float]:
+    """How strongly a crop shows a catchlight inside a dark pupil.
+
+    The first value is the strongest single eye. The second is the weaker eye
+    of a horizontal pair. Both are 0 when no pupil is found. Shut eyes and
+    pale irises without a dark centre stay at 0.
+    """
+    height, width = bgr.shape[:2]
+    if height < 20 or width < 20:
+        return 0.0, 0.0
+    scale = 900 / max(height, width)
+    image = bgr if scale >= 1 else cv2.resize(bgr, (int(width * scale), int(height * scale)), interpolation=cv2.INTER_AREA)
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    frame_h, frame_w = gray.shape
+    windows = [(0, 0, frame_w, frame_h)]
+    for y_frac in (0.0, 0.35):
+        for x_frac in (0.0, 0.35):
+            windows.append(
+                (
+                    int(frame_w * x_frac),
+                    int(frame_h * y_frac),
+                    int(frame_w * min(1, x_frac + 0.7)),
+                    int(frame_h * min(1, y_frac + 0.7)),
+                )
+            )
+    best_single, best_pair = 0.0, 0.0
+    for x0, y0, x1, y1 in windows:
+        pupils = _pupil_catchlights(gray[y0:y1, x0:x1])
+        if pupils:
+            best_single = max(best_single, pupils[0][0])
+        patch_h, patch_w = y1 - y0, x1 - x0
+        for i, left in enumerate(pupils):
+            for right in pupils[i + 1 :]:
+                dx = abs(left[1] - right[1])
+                dy = abs(left[2] - right[2])
+                if dy > max(14, 0.1 * patch_h) or dx < 0.08 * patch_w or dx > 0.62 * patch_w or dy > 0.5 * dx:
+                    continue
+                best_pair = max(best_pair, min(left[0], right[0]))
+    return best_single, best_pair
+
+
+def _pupil_catchlights(gray: np.ndarray) -> list[tuple[float, int, int]]:
+    height, width = gray.shape
+    if height < 30 or width < 30:
+        return []
+    blur = cv2.GaussianBlur(gray, (0, 0), 8)
+    bright = ((gray.astype(np.int16) - blur.astype(np.int16) > 40) & (gray > 160)).astype(np.uint8)
+    count, _labels, stats, centroids = cv2.connectedComponentsWithStats(bright, 8)
+    found = []
+    for i in range(1, count):
+        area = int(stats[i, cv2.CC_STAT_AREA])
+        box_w = int(stats[i, cv2.CC_STAT_WIDTH])
+        box_h = int(stats[i, cv2.CC_STAT_HEIGHT])
+        if area < 1 or area > 30 or max(box_w, box_h) > 8:
+            continue
+        x = int(round(centroids[i][0]))
+        y = int(round(centroids[i][1]))
+        if not (4 < x < width - 4 and 4 < y < height - 4):
+            continue
+        best = None
+        for radius in (8, 12, 18, 26, 36):
+            reach = int(radius * 1.8)
+            y0, y1 = max(0, y - reach), min(height, y + reach + 1)
+            x0, x1 = max(0, x - reach), min(width, x + reach + 1)
+            patch = gray[y0:y1, x0:x1]
+            yy, xx = np.ogrid[: patch.shape[0], : patch.shape[1]]
+            dist = np.sqrt((yy - (y - y0)) ** 2 + (xx - (x - x0)) ** 2)
+            core = (dist >= radius * 0.35) & (dist <= radius * 0.85)
+            outer = (dist >= radius * 1.05) & (dist <= radius * 1.7)
+            if int(core.sum()) < 8 or int(outer.sum()) < 8:
+                continue
+            core_mean = float(patch[core].mean())
+            outer_mean = float(patch[outer].mean())
+            spot = float(gray[y, x])
+            if core_mean > 45 or spot - core_mean < 80 or outer_mean - core_mean < 15:
+                continue
+            score = (spot - core_mean) + (outer_mean - core_mean) - core_mean
+            if best is None or score > best[0]:
+                best = (score, x, y)
+        if best:
+            found.append(best)
+    found.sort(reverse=True)
+    kept = []
+    for item in found:
+        if any((item[1] - other[1]) ** 2 + (item[2] - other[2]) ** 2 < 625 for other in kept):
+            continue
+        kept.append(item)
+        if len(kept) == 6:
+            break
+    return kept
+
+
+def _field(row, name):
+    if isinstance(row, dict):
+        return row.get(name)
+    return getattr(row, name)
+
+
+def crop_box(bgr: np.ndarray, row) -> np.ndarray:
+    height, width = bgr.shape[:2]
+    values = [_field(row, name) for name in ("bbox_x1", "bbox_y1", "bbox_x2", "bbox_y2")]
+    if any(value is None or value is pd.NA or str(value).strip() in {"", "nan", "<NA>", "None"} for value in values):
+        return bgr
+    x1, y1, x2, y2 = [int(float(value)) for value in values]
+    x1, x2 = sorted((max(0, x1), min(width - 1, x2)))
+    y1, y2 = sorted((max(0, y1), min(height - 1, y2)))
+    if x2 - x1 < 20 or y2 - y1 < 20:
+        return bgr
+    return bgr[y1:y2, x1:x2]
+
+
 def square_pad(rgb: np.ndarray) -> np.ndarray:
     """Pad to a square so CLIP's center crop keeps the head instead of cutting it off."""
     height, width = rgb.shape[:2]
@@ -405,7 +472,7 @@ def square_pad(rgb: np.ndarray) -> np.ndarray:
     return canvas
 
 
-def crop_rgb(bgr: np.ndarray, xyxy, pad: float = 0.06):
+def crop_rgb(bgr: np.ndarray, xyxy, pad: float = CROP_PAD):
     height, width = bgr.shape[:2]
     if xyxy is None:
         return square_pad(cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB))
@@ -507,7 +574,7 @@ def reconcile_breed(row: dict) -> str:
     second = row["breed_second"] if row["breed_second"] in domestic else "domestic_shorthair"
     if breed == "siamese" and row["colour_pattern"] != "pointed" and light < 0.40:
         return second
-    if row["breed_margin"] < 0.42:
+    if row['breed_margin'] < BREED_MARGIN:
         return second
     return breed
 
@@ -516,224 +583,8 @@ def apply_framing(row: dict) -> None:
     """Override CLIP framing only when the box size makes the shot obvious."""
     area = row["bbox_area_frac"]
     edges = row["edges_touched"]
-    if row["cat_detected"] and (area >= 0.72 or (edges >= 3 and area >= 0.40)):
+    if row["cat_detected"] and (area >= CLOSE_UP_AREA or (edges >= CLOSE_UP_EDGES and area >= CLOSE_UP_EDGE_AREA)):
         row["framing"] = "close_up"
-    elif row["cat_detected"] and area <= 0.22 and edges <= 1:
+    elif row["cat_detected"] and area <= FULL_BODY_AREA and edges <= FULL_BODY_EDGES:
         row["framing"] = "full_body"
     row["camera_angle"] = f"{row['framing']}_{row['view']}"
-
-
-def eyes_description(eyes: str, eyes_colour: str) -> str:
-    if eyes_colour and eyes == "both_open":
-        return f"{eyes_colour}, both open"
-    if eyes_colour and eyes == "half_closed":
-        return f"{eyes_colour}, half closed"
-    if eyes_colour:
-        return eyes_colour
-    if eyes == "closed":
-        return "closed"
-    if eyes == "not_visible":
-        return "not visible"
-    return eyes
-
-
-def aggregate(images: pd.DataFrame) -> pd.DataFrame:
-    rows = []
-    for cat, group in images.groupby("cat", sort=True):
-        detected = group[group["cat_detected"] == 1]
-        use = detected if len(detected) else group
-        shares = {name: float(use[f"share_{name}"].mean()) for name in COLOURS}
-        share_total = sum(shares.values()) or 1.0
-        shares = {name: value / share_total for name, value in shares.items()}
-        tabby = float(use["tabby_score"].mean())
-        pointed = float(use["pointed_score"].mean())
-        primary, secondary, pattern = labels_from_coat(shares, tabby, pointed)
-        breed, breed_agreement = weighted_mode(use["breed"], use["breed_score"].clip(lower=0.01))
-        voted = use[use["breed"] == breed]
-        angle, camera_agreement = weighted_mode(
-            use["camera_angle"],
-            (use["framing_score"] * use["view_score"]).clip(lower=0.01),
-        )
-        framing, view = split_angle(angle)
-        eyes, eyes_agreement = weighted_mode(use["eyes"], use["eyes_score"].clip(lower=0.01))
-        age, age_agreement = weighted_mode(use["age"], use["age_score"].clip(lower=0.01))
-        posture, posture_agreement = weighted_mode(use["posture"], use["posture_score"].clip(lower=0.01))
-        open_rows = use[(~use["eyes"].isin(["closed", "not_visible"])) & (use["eyes_colour"] != "")]
-        if len(open_rows):
-            eyes_colour, eyes_colour_agreement = weighted_mode(
-                open_rows["eyes_colour"], open_rows["eyes_colour_score"].clip(lower=0.01)
-            )
-        else:
-            eyes_colour, eyes_colour_agreement = "", 0.0
-        rows.append(
-            {
-                "cat": cat,
-                "n_images": int(len(group)),
-                "n_cat_detected": int(group["cat_detected"].sum()),
-                "colour_primary": primary,
-                "colour_secondary": secondary,
-                "colour_pattern": pattern,
-                **{f"share_{name}": shares[name] for name in COLOURS},
-                "breed": breed,
-                "breed_agreement": breed_agreement,
-                "breed_score": float(voted["breed_score"].mean()) if len(voted) else 0.0,
-                "breed_margin": float(voted["breed_margin"].mean()) if len(voted) else 0.0,
-                "camera_angle": angle,
-                "camera_agreement": camera_agreement,
-                "framing": framing,
-                "view": view,
-                "eyes": eyes,
-                "eyes_agreement": eyes_agreement,
-                "eyes_open_share": float((group["eyes"] == "both_open").mean()),
-                "eyes_colour": eyes_colour,
-                "eyes_colour_agreement": eyes_colour_agreement,
-                "eyes_description": eyes_description(eyes, eyes_colour),
-                "age": age,
-                "age_agreement": age_agreement,
-                "posture": posture,
-                "posture_agreement": posture_agreement,
-            }
-        )
-    attributes = pd.DataFrame(rows)
-    strength_path = PROCESSED / "cat_strengths.csv"
-    if strength_path.exists():
-        strengths = pd.read_csv(strength_path)
-        attributes = attributes.merge(strengths, on="cat", how="left")
-        for column in ("appearances", "wins"):
-            attributes[column] = attributes[column].astype("Int64")
-    return attributes.sort_values("cat").reset_index(drop=True)
-
-
-def output_paths(tag: str) -> tuple[Path, Path]:
-    suffix = f"_{tag}" if tag else ""
-    return PROCESSED / f"image_attributes{suffix}.csv", PROCESSED / f"cat_attributes{suffix}.csv"
-
-
-def run(limit: int, sample: int, batch: int, imgsz: int, tag: str, fresh: bool) -> None:
-    torch.set_num_threads(8)
-    image_csv, cat_csv = output_paths(tag)
-    paths = select_paths(list_images(), limit, sample)
-    done: set[str] = set()
-    if image_csv.exists() and not fresh:
-        header = pd.read_csv(image_csv, nrows=0).columns
-        if "age" not in header or "posture" not in header:
-            print("Existing image CSV has no age or posture columns; starting fresh.", flush=True)
-            fresh = True
-    if image_csv.exists() and not fresh:
-        previous = pd.read_csv(image_csv)
-        done = set(previous["image"].astype(str))
-        paths = [path for path in paths if f"{path.parent.name}/{path.name}" not in done]
-        print(f"Resuming: {len(done)} photos already saved, {len(paths)} left", flush=True)
-    elif image_csv.exists() and fresh:
-        image_csv.unlink()
-
-    if paths:
-        print(f"Loading models for {len(paths)} photos", flush=True)
-        yolo, _cat_ids = load_yolo()
-        clip, preprocess, tokenizer = load_clip()
-        text = prepare_text(clip, tokenizer)
-        PROCESSED.mkdir(parents=True, exist_ok=True)
-        wrote_header = not image_csv.exists()
-        for start in range(0, len(paths), batch):
-            chunk = paths[start : start + batch]
-            results = yolo.predict(
-                [str(path) for path in chunk],
-                imgsz=imgsz,
-                conf=0.05,
-                verbose=False,
-                device="cpu",
-                stream=False,
-            )
-            records = []
-            crops = []
-            regions = []
-            for path, result in zip(chunk, results):
-                bgr = result.orig_img
-                inst = animal_instance(result)
-                if inst is None:
-                    mask = np.ones(bgr.shape[:2], dtype=bool)
-                    record = {
-                        "cat": path.parent.name,
-                        "image": f"{path.parent.name}/{path.name}",
-                        "cat_detected": 0,
-                        "det_name": "",
-                        "det_conf": 0.0,
-                        "bbox_area_frac": 0.0,
-                        "edges_touched": 0,
-                        "colour_source": "full_frame",
-                    }
-                    crops.append(crop_rgb(bgr, None))
-                else:
-                    mask = inst["mask"]
-                    record = {
-                        "cat": path.parent.name,
-                        "image": f"{path.parent.name}/{path.name}",
-                        "cat_detected": 1,
-                        "det_name": inst["name"],
-                        "det_conf": inst["conf"],
-                        "bbox_area_frac": inst["area_frac"],
-                        "edges_touched": edges_touched(mask),
-                        "colour_source": inst["source"],
-                    }
-                    crops.append(crop_rgb(bgr, inst["xyxy"]))
-                record.update(coat_features(bgr, mask))
-                records.append(record)
-                regions.append((bgr, mask))
-            for record, labels, (bgr, mask) in zip(records, classify_crops(clip, preprocess, text, crops), regions):
-                record.update(labels)
-                record["breed_raw"] = record["breed"]
-                record["breed"] = reconcile_breed(record)
-                apply_framing(record)
-                if record["eyes"] in {"closed", "not_visible"}:
-                    blob = eye_colour_from_mask(bgr, mask)
-                    if blob:
-                        record["eyes"] = "both_open"
-                        if record["eyes_colour_clip_score"] >= 0.60:
-                            record["eyes_colour"] = record["eyes_colour_clip"]
-                            record["eyes_colour_score"] = record["eyes_colour_clip_score"]
-                        else:
-                            record["eyes_colour"] = blob
-                            record["eyes_colour_score"] = 0.5
-                record.pop("eyes_colour_clip", None)
-                record.pop("eyes_colour_clip_score", None)
-            frame = pd.DataFrame(records)
-            frame.to_csv(image_csv, mode="a", header=wrote_header, index=False)
-            wrote_header = False
-            print(f"{min(start + batch, len(paths))}/{len(paths)}", flush=True)
-
-    if not image_csv.exists():
-        raise SystemExit("No image rows were written.")
-    images = pd.read_csv(image_csv).fillna("")
-    cats = aggregate(images)
-    skip = {"appearances", "wins", "strength", "n_images", "n_cat_detected"}
-    float_cols = [col for col in cats.select_dtypes(include="number").columns if col not in skip]
-    cats[float_cols] = cats[float_cols].round(4)
-    cats.to_csv(cat_csv, index=False, na_rep="")
-    print(f"Wrote {image_csv} ({len(images)} photos) and {cat_csv} ({len(cats)} cats)", flush=True)
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Label breed, colour, camera angle, eyes, age, and posture for each cat.")
-    parser.add_argument("--limit", type=int, default=0, help="Only the first N photos, in filename order.")
-    parser.add_argument("--sample", type=int, default=0, help="One photo from this many evenly spaced cats.")
-    parser.add_argument("--batch", type=int, default=8)
-    parser.add_argument("--imgsz", type=int, default=512)
-    parser.add_argument("--tag", default="", help="Write image_attributes_<tag>.csv instead of the main files.")
-    parser.add_argument("--fresh", action="store_true", help="Ignore an existing image CSV and start again.")
-    parser.add_argument("--aggregate-only", action="store_true", help="Rebuild the per-cat CSV from the image CSV.")
-    args = parser.parse_args()
-    if args.aggregate_only:
-        image_csv, cat_csv = output_paths(args.tag)
-        images = pd.read_csv(image_csv).fillna("")
-        cats = aggregate(images)
-        skip = {"appearances", "wins", "strength", "n_images", "n_cat_detected"}
-        float_cols = [col for col in cats.select_dtypes(include="number").columns if col not in skip]
-        cats[float_cols] = cats[float_cols].round(4)
-        cats.to_csv(cat_csv, index=False, na_rep="")
-        print(f"Wrote {cat_csv} ({len(cats)} cats)", flush=True)
-        return
-    run(args.limit, args.sample, args.batch, args.imgsz, args.tag, args.fresh)
-
-
-if __name__ == "__main__":
-    main()
