@@ -7,7 +7,7 @@ import numpy as np
 import pandas as pd
 import torch
 
-from main import (
+from label_photos import (
     AWAY_VIEWS,
     BOX_FIELDS,
     CLOSED_TO_OPEN_SCORE,
@@ -29,7 +29,7 @@ from main import (
     YOLO_CONF,
     YOLO_DEVICE,
 )
-from vision import (
+from yolo_clip_labels import (
     animal_instance,
     apply_framing,
     box_pixels,
@@ -156,12 +156,14 @@ def aggregate(images: pd.DataFrame) -> pd.DataFrame:
             }
         )
     attributes = pd.DataFrame(rows)
-    strength_path = PROCESSED / "cat_strengths.csv"
-    if strength_path.exists():
-        strengths = pd.read_csv(strength_path)
-        attributes = attributes.merge(strengths, on="cat", how="left")
-        for column in ("appearances", "wins"):
-            attributes[column] = attributes[column].astype("Int64")
+    labels_path = PROCESSED / "cat_labels.csv"
+    if labels_path.exists():
+        previous = pd.read_csv(labels_path)
+        keep = [name for name in ("cat", "appearances", "wins", "strength") if name in previous.columns]
+        if "strength" in keep:
+            attributes = attributes.merge(previous[keep], on="cat", how="left")
+            for column in ("appearances", "wins"):
+                attributes[column] = attributes[column].astype("Int64")
     return attributes.sort_values("cat").reset_index(drop=True)
 
 
@@ -229,7 +231,7 @@ def export_labelled_images(images: pd.DataFrame) -> Path:
     from PIL import Image, ImageDraw, ImageFont
 
     font_path = LABEL_FONT
-    out_root = PROCESSED / "labelled"
+    out_root = PROCESSED / "captioned-photos"
     written = 0
     for row in images.to_dict("records"):
         src = IMAGE_ROOT / row["image"]
@@ -265,7 +267,7 @@ def export_labelled_images(images: pd.DataFrame) -> Path:
 
 def output_paths(tag: str) -> tuple[Path, Path]:
     suffix = f"_{tag}" if tag else ""
-    return PROCESSED / f"image_attributes{suffix}.csv", PROCESSED / f"cat_attributes{suffix}.csv"
+    return PROCESSED / f"photo_labels{suffix}.csv", PROCESSED / f"cat_labels{suffix}.csv"
 
 
 def run(limit: int, sample: int, batch: int, imgsz: int, tag: str, fresh: bool) -> None:

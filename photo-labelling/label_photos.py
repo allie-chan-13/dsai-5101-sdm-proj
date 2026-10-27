@@ -1,20 +1,20 @@
 """Visual attributes for each cat photo.
 
-YOLO finds the cat and its mask. Coat colour and pattern are measured on those
+YOLO finds the cat and its mask. Fur colour and pattern are measured on those
 pixels. Breed, framing, view, eyes, age, and posture are CLIP labels on the crop.
 
 From the project root:
 
     python3.12 -m venv .venv
     .venv/bin/pip install -U -r requirements.txt
-    .venv/bin/python feature-extraction/main.py
+    .venv/bin/python photo-labelling/label_photos.py
 
 Weights go in models/yolo11n-seg.pt. Download:
 https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11n-seg.pt
 The script fetches that file into models/ if it is not already there.
 
-Writes processed/image_attributes.csv, processed/cat_attributes.csv, and a
-captioned copy of each photo under processed/labelled/.
+Writes prepared/photo_labels.csv, prepared/cat_labels.csv, and a
+captioned copy of each photo under prepared/captioned-photos/.
 """
 
 from __future__ import annotations
@@ -34,8 +34,8 @@ warnings.filterwarnings("ignore", module="torch")
 logging.getLogger("ultralytics").setLevel(logging.ERROR)
 
 ROOT = Path(__file__).resolve().parents[1]
-IMAGE_ROOT = ROOT / "dataset" / "images"
-PROCESSED = ROOT / "processed"
+IMAGE_ROOT = ROOT / "cat-arena" / "photos"
+PROCESSED = ROOT / "prepared"
 WEIGHTS = ROOT / "models" / "yolo11n-seg.pt"
 LABEL_FONT = Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf")
 
@@ -135,7 +135,7 @@ LABEL_JPEG_QUALITY = 85
 
 
 def main() -> None:
-    from pipeline import (
+    from save_photo_labels import (
         CAT_INT,
         IMAGE_INT,
         aggregate,
@@ -153,7 +153,7 @@ def main() -> None:
     parser.add_argument("--sample", type=int, default=0, help="One photo from this many evenly spaced cats.")
     parser.add_argument("--batch", type=int, default=YOLO_BATCH)
     parser.add_argument("--imgsz", type=int, default=YOLO_IMGSZ)
-    parser.add_argument("--tag", default="", help="Write image_attributes_<tag>.csv instead of the main files.")
+    parser.add_argument("--tag", default="", help="Write photo_labels_<tag>.csv instead of the main files.")
     parser.add_argument("--fresh", action="store_true", help="Ignore an existing image CSV and start again.")
     parser.add_argument("--aggregate-only", action="store_true", help="Rebuild the per-cat CSV from the image CSV.")
     parser.add_argument("--labels-only", action="store_true", help="Write captioned photos from the image CSV.")

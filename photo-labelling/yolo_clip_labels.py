@@ -1,4 +1,4 @@
-"""YOLO masks, coat colour, and CLIP labels."""
+"""YOLO masks, fur colour, and CLIP labels."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 import torch
 
-from main import (
+from label_photos import (
     AGE,
     BREED_MARGIN,
     BREEDS,
@@ -190,7 +190,7 @@ def edges_touched(mask: np.ndarray, band: int = 2) -> int:
 
 
 def name_coat_pixels(hue: np.ndarray, sat: np.ndarray, val: np.ndarray) -> np.ndarray:
-    """Map HSV pixels to coat names. Later assignments win, so black is last.
+    """Map HSV pixels to fur-colour names. Later assignments win, so black is last.
 
     White is only near-neutral and very bright, so pale gray tabby stripes stay gray.
     Warm indoor light still shifts hue, but low saturation keeps that fur gray.
@@ -565,7 +565,7 @@ def split_angle(angle: str) -> tuple[str, str]:
 
 
 def reconcile_breed(row: dict) -> str:
-    """Keep a specific breed only when CLIP is confident and the coat does not contradict it."""
+    """Keep a specific breed only when CLIP is confident and the fur colour does not contradict it."""
     breed = row["breed"]
     domestic = {"domestic_shorthair", "domestic_longhair"}
     if breed in domestic:
