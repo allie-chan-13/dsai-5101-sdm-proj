@@ -1,6 +1,8 @@
 # virtualenv and tool caches
 .venv/
+.venv-vision/
 .cache/
+models/
 
 # Python
 __pycache__/
