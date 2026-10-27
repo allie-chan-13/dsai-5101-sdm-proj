@@ -6,7 +6,7 @@ Midterm analysis of pairwise cat-image preferences. The question is:
 
 Two photos of the same cat are a separate, smaller question. Cat identity is the part that replicates. Side A has a small, precise advantage. A second photo of the same cat does not have a reproducible winner.
 
-Prediction of `test.csv` is a consequence of that model, not the thing the model was chosen to maximise.
+Prediction of `test-responses.csv` is a consequence of that model, not the thing the model was chosen to maximise.
 
 ## Setup
 
@@ -19,25 +19,27 @@ python3.12 -m venv .venv
 
 Use `.venv` as the Jupyter kernel, and run the notebooks in this order:
 
-1. `notebooks/01_train_eda_cleaning.ipynb` — cleaning, how often cats and photos are shown, and agreement against the cat win-rate gap. Writes `processed/train_cleaned.csv`.
-2. `notebooks/02_train_statistical_indices.ipynb` — agreement, side-swap, and reliability. Not required by the model.
-3. `notebooks/03_bradley_terry.ipynb` — fits the model, runs the holdouts, and writes the test predictions.
+1. `analysis/01_clean_training_responses.ipynb` — cleaning, how often cats and photos are shown, and agreement against the cat win-rate gap. Writes `prepared/cleaned_training_responses.csv`.
+2. `analysis/02_agreement_and_reliability.ipynb` — agreement, side-swap, and reliability. Not required by the model.
+3. `analysis/03_cat_strength_model.ipynb` — fits the model, runs the holdouts, and writes the test predictions.
+4. `analysis/04_cat_label_eda.ipynb` — fur colour, pose, and breed labels against the fitted strengths. Not required by the model.
+5. `analysis/05_label_prediction.ipynb` — whether those labels improve the choice prediction. Not required by the model.
 
-Notebook 3 takes about one minute. Seed is 21.
+Notebook 3 takes about one minute. Seed is 21. Notebook 4 only reads `prepared/cat_labels.csv`.
 
-`dataset/train.csv` and `dataset/test.csv` are left unchanged.
+`cat-arena/training-responses.csv` and `cat-arena/test-responses.csv` are left unchanged.
 
 ## Visual labels
 
-`feature-extraction/main.py` labels each photo. Coat colour and pattern come from the pixels inside the cat. Breed, framing, view, eyes, age, and posture are CLIP labels on the crop. Paths, prompts, and thresholds live in that file.
+`photo-labelling/label_photos.py` labels each photo. Fur colour and pattern come from the pixels inside the cat. Breed, framing, view, eyes, age, and posture are CLIP labels on the crop. Paths, prompts, and thresholds live in that file.
 
 The cat is located with Ultralytics [YOLO11n-seg](https://docs.ultralytics.com/models/yolo11/). Download the weights from [yolo11n-seg.pt](https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11n-seg.pt) and save them as `models/yolo11n-seg.pt`. If that file is missing, the script downloads it into `models/` on the first run.
 
 ```bash
-.venv/bin/python feature-extraction/main.py
+.venv/bin/python photo-labelling/label_photos.py
 ```
 
-The labels are written to `processed/image_attributes.csv` and `processed/cat_attributes.csv`. A copy of each photo, with the detection box and those labels in a bar underneath, is written to `processed/labelled/`. The labels are not inputs to the choice model.
+The labels are written to `prepared/photo_labels.csv` and `prepared/cat_labels.csv`. A copy of each photo, with the detection box and those labels in a bar underneath, is written to `prepared/captioned-photos/`. The labels are not inputs to the choice model.
 
 ## Dataset
 
@@ -45,17 +47,17 @@ Each row is one annotator's response to one image pair. A pair may have multiple
 
 | File | Description |
 | --- | --- |
-| `dataset/train.csv` | 24,896 responses with observed `choice` values. |
-| `dataset/test.csv` | 6,224 test rows with `choice` and `prob_a` left blank. |
-| `dataset/images/` | 1,558 images organized into cat folders. |
+| `cat-arena/training-responses.csv` | 24,896 responses with observed `choice` values. |
+| `cat-arena/test-responses.csv` | 6,224 test rows with `choice` and `prob_a` left blank. |
+| `cat-arena/photos/` | 1,558 images organized into cat folders. |
 
 Get the images from [Hugging Face](https://huggingface.co/datasets/missing12/cat-image-arena-images/tree/main/images).
 
-The `a_image` and `b_image` fields contain paths relative to `dataset/images/`. For example:
+The `a_image` and `b_image` fields contain paths relative to `cat-arena/photos/`. For example:
 
 ```text
 Table value: cat_000002/cat_000002_0001.jpg
-Local file:  dataset/images/cat_000002/cat_000002_0001.jpg
+Local file:  cat-arena/photos/cat_000002/cat_000002_0001.jpg
 ```
 
 | Field | Meaning |
@@ -160,7 +162,7 @@ This matches notebook 2, and the repeated-pair gradient in notebook 1. Split-hal
 
 ## Test predictions
 
-`processed/test_predictions.csv` has the original test columns. `prob_a` is filled, and `choice` is A when `prob_a ≥ 0.5`, otherwise B. Counts: 4,317 A and 1,907 B.
+`prepared/test_choice_probabilities.csv` has the original test columns. `prob_a` is filled, and `choice` is A when `prob_a ≥ 0.5`, otherwise B. Counts: 4,317 A and 1,907 B.
 
 | Test slice | Rows | Mean `prob_a` | Share predicted A |
 | --- | ---: | ---: | ---: |
@@ -173,32 +175,42 @@ The last two slices are constant probabilities above one half, so the decision r
 
 The original test labels are blank, so these slices are not scored. The cat-holdout table is the training analogue.
 
-## What was not fit
+## Reading the result
 
-A deep model on the pixels was not used. Within a cat, the photo-level target barely replicates, so a network would be fitting disagreement. Between cats, the stable signal is which cat, and a photo embedding would mostly rediscover that identity. The YOLO labels above are a description of the photos. They are not in the fitted choice model.
+The stable piece is which cat. Cat strength plus the side term moves pair-fold log loss from 0.6924 to 0.6552. Split-half correlation of cat strength is about 0.69. Agreement on a repeated between-cat pair rises from 0.51 to 0.65 as the cats' win rates move apart. The repeated answers are noisy around that ranking: they match 0.561 of the time, and Cohen's kappa on a repeated ordered pair is 0.11.
+
+A ranking of photos does not replicate. Split-half correlation of within-cat photo strength is about 0.15. Kappa within a cat is 0.05. The best within-cat photo model gains 0.003 log loss. Background fields are not predictors: every Cramér's V with `choice` is under 0.05.
+
+Cat strength has nothing to say about a cat that was not in the fit. The holdout gain is about 0.030 when both cats were seen, about 0.007 when one was not, and zero when neither was.
+
+Fur colour is the visual label that still predicts in that last case. On the same pair folds, fur colour shares reach a log loss of 0.6813, a gain of 0.011 over the side rate, and every fold moves the same way. Pose, eyes, breed, and shot size gain 0.002 or less. Adding fur colour on top of cat strength changes log loss by 0.0002, because the fur colour is already inside the cat's strength. With both cats unseen, fur colour shares beat the side rate by about 0.013. Within a cat, none of these photo labels beat the side rate.
+
+That is the place a shared feature can stand in for a missing item score. It is not a reason to add demographics. A network on the pixels was not fit. Within a cat the target barely replicates, so a network would be fitting disagreement. Between cats the stable signal is which cat, and a photo embedding would mostly rediscover that identity. The YOLO and CLIP labels are a description of the photos. They are not in the fitted choice model.
 
 ## Project files
 
 | Path | Role |
 | --- | --- |
 | `requirements.txt` | Pinned packages for Python 3.12 |
-| `notebooks/01_train_eda_cleaning.ipynb` | Cleaning, appearance counts, agreement by win-rate gap |
-| `notebooks/02_train_statistical_indices.ipynb` | Kappa, side swap, reliability, Cramér's V |
-| `notebooks/03_bradley_terry.ipynb` | Model, holdouts, test file |
-| `feature-extraction/main.py` | Paths, prompts, and thresholds for the photo labels |
-| `feature-extraction/vision.py` | YOLO mask, coat colour, and CLIP labels |
-| `feature-extraction/pipeline.py` | Attribute tables and captioned photos |
+| `course/midterm-report-guidelines-2026.pdf` | Course brief for the midterm report |
+| `analysis/01_clean_training_responses.ipynb` | Cleaning, appearance counts, agreement by win-rate gap |
+| `analysis/02_agreement_and_reliability.ipynb` | Kappa, side swap, reliability, Cramér's V |
+| `analysis/03_cat_strength_model.ipynb` | Model, holdouts, test file |
+| `analysis/04_cat_label_eda.ipynb` | Label counts and fur colour against fitted strength |
+| `analysis/05_label_prediction.ipynb` | Whether the visual labels improve choice prediction |
+| `photo-labelling/label_photos.py` | Paths, prompts, and thresholds for the photo labels |
+| `photo-labelling/yolo_clip_labels.py` | YOLO mask, fur colour, and CLIP labels |
+| `photo-labelling/save_photo_labels.py` | Attribute tables and captioned photos |
 | `models/yolo11n-seg.pt` | YOLO11n-seg weights; downloaded, not committed |
-| `processed/image_attributes.csv` | One labelled row per photo |
-| `processed/labelled/` | Photos with the detection box and the label bar |
-| `processed/cat_attributes.csv` | One labelled row per cat, with strengths joined when present |
-| `processed/train_cleaned.csv` | Training table used by notebooks 2 and 3 |
-| `processed/cat_strengths.csv` | 237 centered cat strengths and win counts |
-| `processed/test_predictions.csv` | Test file with `prob_a` and `choice` filled |
-| `outputs/regularization_path.csv` | Held-out scores across `C` |
-| `outputs/pair_holdout_logloss.csv` | Primary comparison |
-| `outputs/cat_holdout_logloss.csv` | Scores by whether the cat was seen |
-| `outputs/side_effect_bootstrap.csv` | Side-effect interval |
-| `outputs/figures/` | Figures cited by the notebooks |
+| `prepared/photo_labels.csv` | One labelled row per photo |
+| `prepared/captioned-photos/` | Photos with the detection box and the label bar |
+| `prepared/cat_labels.csv` | One labelled row per cat, including fitted strength, appearances, and wins |
+| `prepared/cleaned_training_responses.csv` | Training table used by notebooks 2 and 3 |
+| `prepared/test_choice_probabilities.csv` | Test file with `prob_a` and `choice` filled |
+| `model-checks/regularization_path.csv` | Held-out scores across `C` |
+| `model-checks/pair_holdout_logloss.csv` | Primary comparison |
+| `model-checks/cat_holdout_logloss.csv` | Scores by whether the cat was seen |
+| `model-checks/side_effect_bootstrap.csv` | Side-effect interval |
+| `model-checks/figures/` | Figures cited by the notebooks |
 
 For research and educational use only.
